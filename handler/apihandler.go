@@ -1,13 +1,20 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/Hagelund96/paragliding/struct"
+	"github.com/Hagelund96/paragliding/db"
+	"github.com/gorilla/mux"
 	"github.com/marni/goigc"
+	"log"
+	"math/rand"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 //checks if the given id exists
@@ -42,10 +49,10 @@ func replyWithAllTracksId(w http.ResponseWriter, db _struct.TrackDB) {
 }
 
 //parses id into json, and encodes and outputs whole track mapped to id
-func replyWithTracksId(w http.ResponseWriter, db _struct.TrackDB, id string) {
+/*func replyWithTracksId(w http.ResponseWriter, db _struct.TrackDB, id string) {
 	http.Header.Set(w.Header(), "content-type", "application/json")
 	t, _ := db.Get(strings.ToUpper(id))
-	api := _struct.Track{t.HeaderDate, t.Pilot, t.Glider, t.GliderId, t.TrackLength}
+	api := _struct.Track{t.UniqueId, t.HeaderDate, t.Pilot, t.Glider, t.GliderId, t.TrackLength, }
 	json.NewEncoder(w).Encode(api)
 }
 
@@ -54,7 +61,7 @@ func replyWithField(w http.ResponseWriter, db _struct.TrackDB, id string, field 
 	http.Header.Set(w.Header(), "content-type", "application/json")
 	t, _ := db.Get(strings.ToUpper(id))
 
-	api := _struct.Track{t.HeaderDate, t.Pilot, t.Glider, t.GliderId, t.TrackLength}
+	api := _struct.Track{t.UniqueId, t.HeaderDate, t.Pilot, t.Glider, t.GliderId, t.TrackLength}
 
 	switch strings.ToUpper(field) {
 	case "PILOT":
@@ -71,9 +78,21 @@ func replyWithField(w http.ResponseWriter, db _struct.TrackDB, id string, field 
 		http.Error(w, "Not a valid option", http.StatusNotFound)
 		return
 	}
+}*/
+	//redirect /igcinfo to /igcinfo/api
+func Handler(w http.ResponseWriter, r *http.Request) {
+
+	//Handling for /igcinfo and for /<rubbish>
+	if r.Method != "GET" {
+		http.Error(w, "501 - Method not implemented", http.StatusNotImplemented)
+		return
+	}
+
+	// Redirect to /paragliding/api
+	http.Redirect(w, r, "/paragliding/api", 302)
 }
 
-func HandlerIgc(w http.ResponseWriter, r *http.Request) {
+/*func HandlerIgc(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	//handling POST /api/igc/   **NEED TO HAVE SLASH, DOES NOT WORK WIHTOUT**
 	case "POST":
@@ -102,7 +121,7 @@ func HandlerIgc(w http.ResponseWriter, r *http.Request) {
 		totalDistance := _struct.CalculatedDistance(track)
 		var i _struct.ID
 		i.ID = ("ID" + strconv.Itoa(_struct.LastUsed))
-		t := _struct.Track{track.Header.Date,
+		t := _struct.Track{track.UniqueID, track.Header.Date,
 			track.Pilot,
 			track.GliderType,
 			track.GliderID,
@@ -129,8 +148,8 @@ func HandlerIgc(w http.ResponseWriter, r *http.Request) {
 			//handling /api/igc/id/ and /api/igc/id/field
 
 			if parts[5] == "" {
-				if !checkId(parts[4]) /*!idExists*/ {
-					http.Error(w, "ID out of range.", http.StatusNotFound)
+				if !checkId(parts[4]) /*!idExists*/ //{
+				/*	http.Error(w, "ID out of range.", http.StatusNotFound)
 					return
 				} else {
 					replyWithTracksId(w, _struct.Db, parts[4])
@@ -181,8 +200,8 @@ func HandlerIgc(w http.ResponseWriter, r *http.Request) {
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return*/
-	}
-}
+	//}
+//}
 
 //handler for /api shows uptime description and version in json
 func HandlerApi(w http.ResponseWriter, r *http.Request) {
@@ -194,6 +213,238 @@ func HandlerApi(w http.ResponseWriter, r *http.Request) {
 	} else {
 		http.Error(w, http.StatusText(404), 404)
 	}
+}
+
+//Handling for /paragliding/api/track
+func HandlerTrack(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	switch r.Method {
+	//Handling GET /paragliding/api/track for all ids  in database
+	case http.MethodGet:
+
+		client := db.MongoConnect()
+
+		ids := db.GetTrackID(client)
+
+		fmt.Fprint(w, ids)
+
+	case http.MethodPost:
+
+		//handling post /igcinfo/api/igc for sending a url and returning an id for that url
+		pattern := ".*.igc"
+
+		URL := &_struct.URL{}
+
+		var error = json.NewDecoder(r.Body).Decode(URL)
+		if error != nil {
+			fmt.Fprintln(w, "Error!! ", error)
+			return
+		}
+		res, err := regexp.MatchString(pattern, URL.URL)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if res {
+			ID := rand.Intn(1000)
+
+			track, err := igc.ParseLocation(URL.URL)
+			if err != nil {
+				fmt.Fprintln(w, "Error made: ", err)
+				return
+			}
+
+			track.UniqueID = strconv.Itoa(ID)
+
+			trackFile := _struct.Track{}
+
+			timestamp := time.Now().Second()
+			timestamp = timestamp * 1000
+
+			totalDistance := _struct.CalculatedDistance(track)
+
+			client := db.MongoConnect()
+
+			collection := client.Database("paragliding").Collection("tracks")
+
+			// Checking for duplicates so that the user doesn't add into the database igc files with the same URL
+			duplicate := db.UrlInDB(URL.URL, collection)
+
+			if !duplicate {
+
+				trackFile = _struct.Track{
+				track.UniqueID, track.Header.Date, track.Pilot, track.GliderType, track.GliderID, totalDistance, URL.URL}
+
+				res, err := collection.InsertOne(context.Background(), trackFile)
+				if err != nil {
+					log.Fatal(err)
+				}
+
+				id := res.InsertedID
+
+				if id == nil {
+					http.Error(w, "", 300)
+				}
+
+				// Encoding the ID of the track that was just added to DB
+				fmt.Fprint(w, "{\n\"id\":\""+track.UniqueID+"\"\n}")
+
+			} else {
+
+				trackInDB := db.GetTrack(client, URL.URL)
+				// If there is another file in igcFilesDB with that URL return and tell the user that that IGC FILE is already in the database
+				http.Error(w, "409 already exists!", http.StatusConflict)
+				fmt.Fprintln(w, "\nID in db: ", trackInDB.UniqueId)
+				return
+
+			}
+
+		}
+	default:
+		http.Error(w, "Not implemented", http.StatusNotImplemented)
+		return
+	}
+
+}
+
+func HandlerID(w http.ResponseWriter, r *http.Request) {
+	//Handling /igcinfo/api/igc/<id>
+	if r.Method != "GET" {
+		http.Error(w, "501 - Method not implemented", http.StatusNotImplemented)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	idURL := mux.Vars(r)
+
+	rNum, _ := regexp.Compile(`[0-9]+`)
+	if !rNum.MatchString(idURL["id"]) {
+		http.Error(w, "400 - Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	client := db.MongoConnect()
+
+	collection := client.Database("paragliding").Collection("tracks")
+
+	cursor, err := collection.Find(context.Background(), nil, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer cursor.Close(context.Background())
+
+	track := _struct.Track{}
+
+
+	for cursor.Next(context.Background()) {
+		err = cursor.Decode(&track)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if track.UniqueId == idURL["id"] {
+			http.Header.Set(w.Header(), "content-type", "application/json")
+			api := _struct.Track{track.UniqueId, track.HeaderDate, track.Pilot, track.Glider, track.GliderId, track.TrackLength, track.URL}
+			json.NewEncoder(w).Encode(api)
+
+		} else {
+			//Handling if user type different id from ids stored
+			http.Error(w, "404 - ID not in database ", http.StatusNotFound)
+
+		}
+
+	}
+
+}
+
+func HandlerField(w http.ResponseWriter, r *http.Request) {
+
+	//Handling for GET /api/igc/<id>/<field>
+	w.Header().Set("Content-Type", "application/json")
+
+	urlFields := mux.Vars(r)
+
+	var rNum, _ = regexp.Compile(`[a-zA-Z_]+`)
+
+	//attributes := &Attributes{}
+
+	// Regular Expression for IDs
+
+	regExID, _ := regexp.Compile("[0-9]+")
+
+	if !regExID.MatchString(urlFields["id"]) {
+		http.Error(w, "400 - Bad Request, invalid ID.", http.StatusBadRequest)
+		return
+	}
+
+	if !rNum.MatchString(urlFields["field"]) {
+		http.Error(w, "400 - Bad Request, wrong parameters", http.StatusBadRequest)
+		return
+	}
+	client := db.MongoConnect()
+
+	trackDB := _struct.Track{}
+
+	trackDB = db.GetOneTrack(client, urlFields["id"], w)
+	// Taking the field variable from the URL path and converting it to lower case to skip some potential errors
+	field := urlFields["field"]
+
+	http.Header.Set(w.Header(), "content-type", "application/json")
+
+	api := _struct.Track{trackDB.UniqueId, trackDB.HeaderDate, trackDB.Pilot, trackDB.Glider, trackDB.GliderId, trackDB.TrackLength, trackDB.URL}
+
+	switch strings.ToUpper(field) {
+	case "PILOT":
+		json.NewEncoder(w).Encode(api.Pilot)
+	case "GLIDER":
+		json.NewEncoder(w).Encode(api.Glider)
+	case "GLIDER_ID":
+		json.NewEncoder(w).Encode(api.GliderId)
+	case "TRACK_LENGTH":
+		json.NewEncoder(w).Encode(api.TrackLength)
+	case "H_DATE":
+		json.NewEncoder(w).Encode(api.HeaderDate)
+	case "URL":
+		json.NewEncoder(w).Encode(api.URL)
+	default:
+		http.Error(w, "Not a valid option", http.StatusNotFound)
+		return
+	}
+}
+	//counts all tracks in DB for admin
+func AdminTracksCount(w http.ResponseWriter, r *http.Request) {
+
+	//w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != "GET" {
+		http.Error(w, "501 - Method not implemennted", http.StatusNotImplemented)
+		return
+	}
+
+	client := db.MongoConnect()
+
+	fmt.Fprintf(w, "tracks in DB : %d", db.CountAllTracks(client))
+}
+	//deletes tracks in db
+func AdminTracks(w http.ResponseWriter, r *http.Request) {
+
+	//w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != "DELETE" {
+		http.Error(w, "501 - Method not implemented", http.StatusNotImplemented)
+		return
+	}
+
+	client := db.MongoConnect()
+
+	// Notifying the admin first for the current count of the track
+	fmt.Fprintf(w, "tracks removed from DB : %d", db.CountAllTracks(client))
+
+	// Deleting all the track in DB
+	db.DeleteAllTracks(client)
+
 }
 
 //Old functions that we went away from, left behind to show working progress

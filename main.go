@@ -17,9 +17,15 @@ func main() {
 		p = ":8080"
 	}
 	//different handlers for urls
-	http.HandleFunc("/igcinfo/api/", handler.HandlerApi)
-	http.HandleFunc("/igcinfo/api/igc/", handler.HandlerIgc)
+	http.HandleFunc("/paragliding", handler.Handler)
+	http.HandleFunc("/paragliding/api/", handler.HandlerApi)
+	//http.HandleFunc("/paragliding/api/igc/", handler.HandlerIgc)
+	http.HandleFunc("/paragliding/api/track", handler.HandlerTrack)
+	http.HandleFunc("/paragliding/api/track/{id}", handler.HandlerID)
+	http.HandleFunc("/paragliding/api/track/{id}/{field}", handler.HandlerField)
+	http.HandleFunc("/paragliding/admin/api/tracks_count", handler.AdminTracksCount)
+	http.HandleFunc("/paragliding/admin/api/tracks", handler.AdminTracks)
 
-	
+
 	http.ListenAndServe(p, nil)
 }
